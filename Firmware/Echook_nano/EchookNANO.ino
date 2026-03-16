@@ -10,15 +10,15 @@
 #define PIN_BUTTON_2    8
 
 #define PIN_RPM_1       3
-#define PIN_RPM_2       2 //Not used
+#define PIN_RPM_2       2 //Not connected on PC, to enable solder wire from leg 1 of R18 to Arduino pin D2
 #define PIN_BT_EN       4 //NC
 
 //Battery buzmac
 const float ADC_REF_VOLTAGE = 5.0;
-const float DIVIDER_R1 = 82000.0;
-const float DIVIDER_R2 = 15750.0;
-const float DIVIDER_R3 = 77500.0;
-const float DIVIDER_R4 = 15200.0;
+const float DIVIDER_R1 = 72000.0;
+const float DIVIDER_R2 = 10000.0;
+const float DIVIDER_R3 = 72000.0;
+const float DIVIDER_R4 = 10000.0;
 
 float bat1Voltage   = 0.0;
 float bat2Voltage   = 0.0;
