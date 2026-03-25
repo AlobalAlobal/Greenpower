@@ -1,22 +1,22 @@
-#define PIN_BAT_TOTAL   A0
-#define PIN_BAT_1       A7
-#define PIN_CURRENT     A2
-#define PIN_THROTTLE    A3
-#define PIN_TEMP_1      A5
-#define PIN_TEMP_2      A4
+#define PIN_BAT_TOTAL   A0 // Bat total, also provides power for PCB with built in regulator
+#define PIN_BAT_1       A7 // Bat 1, Bat 2 is calculated by BAT_TOTAL - BAT_1
+#define PIN_CURRENT     A2 // Not used, better solution found
+#define PIN_THROTTLE    A3 // Not used, PWM is not controlled by potentiometer byt digitaly
+#define PIN_TEMP_1      A5 // 1.5kOHM thermistor connected
+#define PIN_TEMP_2      A4 // 1.5kOHM thermistor connected
 
-#define PIN_BRAKE_IN    7
-#define PIN_BUTTON_1    12
-#define PIN_BUTTON_2    8
+#define PIN_BRAKE_IN    7  // Wired along with other datalogger cables (UBTN1, UBTN2 and GND) but not connected ATM to anything, if done it will transmit brake state, Green Cable
+#define PIN_BUTTON_1    12 // Also sometimes labeled as user button 1, UBTN1 (Upper one in 3rd column on the steering wheel), Brown cable
+#define PIN_BUTTON_2    8  // Also sometimes labeled as user button 2, UBTN2 (Lower one in 3rd column on the steering wheel), Orange cable
 
-#define PIN_RPM_1       3
-#define PIN_RPM_2       2 //Not connected on PCB, to enable solder a wire from leg 1 of R18 to Arduino pin D2
-#define PIN_BT_EN       4 //Not connected on PCB, to enable solder a wire from BT connector EN pin to Arduino pin D4
+#define PIN_RPM_1       3 // IR Light barier sensor connected to it, counts both teeth --> gap and ap --> teeth as a trigger so generates twice per teeth
+#define PIN_RPM_2       2 // Not connected on PCB, to enable solder a wire from leg 1 of R18 to Arduino pin D2
+#define PIN_BT_EN       4 // Not connected on PCB, to enable solder a wire from BT connector EN pin to Arduino pin D4
 
 // ================= CONFIG =================
 const float ADC_REF_VOLTAGE = 5.0;
 
-// Voltage dividers
+// Resistor values for BAT voltage dividers, they may be changed with new board, the original 17kOHM/82kOHM used poor quality components so was not precise
 const float DIVIDER_R1 = 68500.0;
 const float DIVIDER_R2 = 9700.0;
 const float DIVIDER_R3 = 68500.0;
@@ -25,13 +25,17 @@ const float DIVIDER_R4 = 9700.0;
 // Thermistor
 const float NTC_NOMINAL     = 1500.0;
 const float TEMP_NOMINAL    = 25.0;
+  float r2 = NTC_TOP_RES * (v2 / (ADC_REF_VOLTAGE - v2));
+
+  float t2 = log(r2 / NTC_NOMINAL) / B_COEFFICIENT;
+  t2 += 1.0 / (TEMP_NOMINAL + 273.15);
 const float B_COEFFICIENT   = 3950.0;
 const float NTC_TOP_RES     = 10000.0;
 
 // Wheel + RPM
-const int   PULSES_PER_REV = 23;
-const float WHEEL_RADIUS_M = 0.225;   // meters
-const float MAX_SPEED_KMH  = 45.0;
+const int   PULSES_PER_REV = 46;
+const float WHEEL_RADIUS_M = 0.225;   // Radius in meters under nominal weight
+const float MAX_SPEED_KMH  = 45.0; // Simple filtration of noise
 
 // ================= STATE =================
 float bat1Voltage = 0, bat2Voltage = 0, batTotal = 0;
