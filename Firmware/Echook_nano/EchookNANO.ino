@@ -1,7 +1,118 @@
+// ================= SOFTWARE I2C (SDA = D9, SCL = D1,
+) =================
+#include <Arduino.h>
+
+#define SDA_PIN 9
+#define SCL_PIN 10
+#define PM_ADDR 0x45
+
+// I2C timing (100 kHz)
+#define I2C_DELAY_US 5
+
+void i2c_init() {
+  pinMode(SDA_PIN, OUTPUT);
+  pinMode(SCL_PIN, OUTPUT);
+  digitalWrite(SDA_PIN, HIGH);
+  digitalWrite(SCL_PIN, HIGH);
+}
+
+void i2c_start() {
+  digitalWrite(SDA_PIN, HIGH);
+  digitalWrite(SCL_PIN, HIGH);
+  delayMicroseconds(I2C_DELAY_US);
+  digitalWrite(SDA_PIN, LOW);
+  delayMicroseconds(I2C_DELAY_US);
+  digitalWrite(SCL_PIN, LOW);
+  delayMicroseconds(I2C_DELAY_US);
+}
+
+void i2c_stop() {
+  digitalWrite(SDA_PIN, LOW);
+  delayMicroseconds(I2C_DELAY_US);
+  digitalWrite(SCL_PIN, HIGH);
+  delayMicroseconds(I2C_DELAY_US);
+  digitalWrite(SDA_PIN, HIGH);
+  delayMicroseconds(I2C_DELAY_US);
+}
+
+void i2c_write_bit(uint8_t bit) {
+  digitalWrite(SDA_PIN, bit ? HIGH : LOW);
+  delayMicroseconds(I2C_DELAY_US);
+  digitalWrite(SCL_PIN, HIGH);
+  delayMicroseconds(I2C_DELAY_US);
+  digitalWrite(SCL_PIN, LOW);
+  delayMicroseconds(I2C_DELAY_US);
+}
+
+uint8_t i2c_read_bit() {
+  pinMode(SDA_PIN, INPUT_PULLUP);
+  delayMicroseconds(I2C_DELAY_US);
+  digitalWrite(SCL_PIN, HIGH);
+  delayMicroseconds(I2C_DELAY_US);
+  uint8_t bit = digitalRead(SDA_PIN);
+  digitalWrite(SCL_PIN, LOW);
+  delayMicroseconds(I2C_DELAY_US);
+  pinMode(SDA_PIN, OUTPUT);
+  return bit;
+}
+
+uint8_t i2c_write_byte(uint8_t data) {
+  for (uint8_t i = 0; i < 8; i++) {
+    i2c_write_bit((data >> (7 - i)) & 0x01);
+  }
+  // read ACK
+  uint8_t ack = i2c_read_bit();
+  return ack; // 0 = ACK, 1 = NACK
+}
+
+uint8_t i2c_read_byte(uint8_t ack) {
+  uint8_t byte = 0;
+  for (uint8_t i = 0; i < 8; i++) {
+    byte = (byte << 1) | i2c_read_bit();
+  }
+  // send ACK/NACK
+  i2c_write_bit(ack ? 0 : 1); // 0 = ACK, 1 = NACK
+  return byte;
+}
+
+// Read 24-bit unsigned from a register
+uint32_t read24_sw(uint8_t reg) {
+  i2c_start();
+  // send address + write
+  i2c_write_byte((PM_ADDR << 1) | 0);
+  i2c_write_byte(reg);
+  // repeated start
+  i2c_start();
+  i2c_write_byte((PM_ADDR << 1) | 1);
+  // read 3 bytes
+  uint32_t val = 0;
+  val |= ((uint32_t)i2c_read_byte(1) << 16);
+  val |= ((uint32_t)i2c_read_byte(1) << 8);
+  val |= i2c_read_byte(0);
+  i2c_stop();
+  return val;
+}
+
+// Read 24-bit signed from a register
+int32_t readSigned24_sw(uint8_t reg) {
+  uint32_t val = read24_sw(reg);
+  if (val & 0x800000) val |= 0xFF000000;
+  return (int32_t)val;
+}
+
+// Read current from the I2C sensor (address 0x45, register 0x07)
+float readI2CCurrent() {
+  int32_t rawI = readSigned24_sw(0x07);
+  float rawAmps = rawI * 0.00003665;
+  float amps = rawAmps * 1.0178 - 0.0076;
+  return amps;
+}
+
+// ================= ORIGINAL ECHOOK CODE (with current replaced) =================
 #define PIN_BAT_TOTAL   A0 // Bat total, also provides power for PCB with built in regulator
 #define PIN_BAT_1       A7 // Bat 1, Bat 2 is calculated by BAT_TOTAL - BAT_1
 #define PIN_CURRENT     A2 // Not used, better solution found
-#define PIN_THROTTLE    A3 // Not used, PWM is not controlled by potentiometer byt digitaly
+#define PIN_THROTTLE    A3 // Not used, PWM is not controlled by potentiometer but digitaly
 #define PIN_TEMP_1      A5 // 1.5kOHM thermistor connected
 #define PIN_TEMP_2      A4 // 1.5kOHM thermistor connected
 
@@ -21,19 +132,15 @@ const float DIVIDER_R1 = 68500.0;
 const float DIVIDER_R2 = 9700.0;
 const float DIVIDER_R3 = 68500.0;
 const float DIVIDER_R4 = 9700.0;
-
+ 
 // Thermistor
 const float NTC_NOMINAL     = 1500.0;
 const float TEMP_NOMINAL    = 25.0;
-  float r2 = NTC_TOP_RES * (v2 / (ADC_REF_VOLTAGE - v2));
-
-  float t2 = log(r2 / NTC_NOMINAL) / B_COEFFICIENT;
-  t2 += 1.0 / (TEMP_NOMINAL + 273.15);
 const float B_COEFFICIENT   = 3950.0;
 const float NTC_TOP_RES     = 10000.0;
 
 // Wheel + RPM
-const int   PULSES_PER_REV = 46;
+const int   PULSES_PER_REV = 46; // IR Light barier sensor connected to it, counts both teeth --> gap and ap --> teeth as a trigger so generates twice per teeth
 const float WHEEL_RADIUS_M = 0.225;   // Radius in meters under nominal weight
 const float MAX_SPEED_KMH  = 45.0; // Simple filtration of noise
 
@@ -72,6 +179,7 @@ void rpmISR() {
 // ================= SETUP =================
 void setup() {
   Serial.begin(9600);
+  i2c_init();   // initialize software I2C pins
 
   pinMode(PIN_BUTTON_1, INPUT_PULLUP);
   pinMode(PIN_BUTTON_2, INPUT_PULLUP);
@@ -102,9 +210,8 @@ void readBatteries() {
 
   bat2Voltage = batTotal - bat1Voltage;
 
-  int rawCurrent = analogRead(PIN_CURRENT);
-  float voltage = (rawCurrent * ADC_REF_VOLTAGE) / 1023.0;
-  current = (voltage - 2.5) * 10.0;
+  // Replace analog current reading with I2C sensor
+  current = readI2CCurrent();
 
   int rawThrottle = analogRead(PIN_THROTTLE);
   throttle = (rawThrottle / 1023.0) * 100.0;
