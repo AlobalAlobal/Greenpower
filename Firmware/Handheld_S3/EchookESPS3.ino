@@ -2,6 +2,7 @@
 #include <esp_now.h>
 #include <WiFi.h>
 #include <esp_wifi.h>
+#include "esp_sleep.h"
 
 /* ===================== ESP-NOW DEFINITIONS ===================== */
 typedef struct sensor_data_full {
@@ -49,6 +50,10 @@ int currentRSSI = 0;
 
 /* ===================== BATTERY ===================== */
 #define BAT_ADC  6
+
+/* ===================== SLEEP/WAKE PINS ===================== */
+#define SLEEP_PIN 8   // S1 position A - when LOW, go to sleep
+#define WAKE_PIN 3    // S1 position B - when LOW, stay awake
 
 /* ===================== SWITCH GPIO GROUPS ===================== */
 const int sw3pos[4][2] = {
@@ -135,8 +140,8 @@ String logBuffer[LOG_LINES];
 int logIndex = 0;
 
 /* ===================== STATE ===================== */
-int prevX1 = 0, prevY1 = 0;
-int prevX2 = 0, prevY2 = 0;
+int prevX1 = 0, prevX2 = 0;
+int prevY1 = 0, prevY2 = 0;
 
 /* ===================== COLORS ===================== */
 uint16_t BG, GREEN, RED, BLUE, YELLOW, WHITE, CYAN, MAGENTA;
@@ -197,6 +202,61 @@ void OnDataRecv(const esp_now_recv_info_t *recv_info, const uint8_t *incomingDat
     } else {
         errorPacketCount++;
         Serial.printf("Packet size mismatch: expected %d, got %d\n", sizeof(receivedData), len);
+    }
+}
+
+/* ===================== SLEEP FUNCTION ===================== */
+void goToSleep() {
+    Serial.println("Going to deep sleep...");
+    Serial.flush();
+    
+    // Turn off backlight
+    digitalWrite(TFT_BL, LOW);
+    
+    // Small delay to ensure display is off
+    delay(100);
+    
+    // Configure wake-up on WAKE_PIN (GPIO3) going LOW
+    // When switch moves from sleep position to wake position, GPIO3 will go LOW
+    esp_sleep_enable_ext0_wakeup((gpio_num_t)WAKE_PIN, 0);  // Wake when WAKE_PIN goes LOW
+    
+    // Enter deep sleep - will not return from this call
+    esp_deep_sleep_start();
+}
+
+/* ===================== CHECK SLEEP TRIGGER ===================== */
+void checkSleepTrigger() {
+    static unsigned long sleepDebounceTime = 0;
+    static bool lastSleepState = false;
+    
+    // Read sleep switch - LOW means switch is in sleep position
+    bool sleepPinState = digitalRead(SLEEP_PIN) == LOW;
+    bool wakePinState = digitalRead(WAKE_PIN) == LOW;
+    
+    // Determine if we should sleep
+    // Sleep when SLEEP_PIN is LOW and WAKE_PIN is HIGH (switch in sleep position)
+    bool shouldSleep = sleepPinState && !wakePinState;
+    
+    // Debounce
+    if (shouldSleep != lastSleepState) {
+        sleepDebounceTime = millis();
+        lastSleepState = shouldSleep;
+    }
+    
+    // If debounced and should sleep, go to sleep
+    if (shouldSleep && (millis() - sleepDebounceTime) > 500) {
+        // Show sleep message briefly
+        gfx->fillScreen(BG);
+        gfx->setTextSize(3);
+        gfx->setTextColor(WHITE);
+        gfx->setCursor(120, 140);
+        gfx->print("BOOTING/SLEEPING");
+        gfx->setTextSize(1);
+        gfx->setCursor(100, 200);
+        gfx->print("Move S1 switch to wake");
+        delay(500);
+        
+        goToSleep();
     }
 }
 
@@ -379,11 +439,10 @@ void updateControlsScreen() {
     }
 }
 
-/* ===================== SCREEN 2: TELEMETRY (COMPLETELY REWRITTEN) ===================== */
+/* ===================== SCREEN 2: TELEMETRY ===================== */
 uint8_t prevBtn1, prevBtn2, prevBrake;
 float prevTemp1, prevTemp2, prevBat1, prevBat2, prevBatTotal, prevSpeed, prevCurrent, prevVsens, prevPower, prevWh;
 
-// Declare updateTelemetryScreen first, then drawTelemetryScreen
 void updateTelemetryScreen(bool forceFullUpdate = false) {
     if (!newDataAvailable && !forceFullUpdate) return;
     
@@ -440,8 +499,7 @@ void updateTelemetryScreen(bool forceFullUpdate = false) {
         prevTemp2 = receivedData.temp2;
     }
     
-    // ***** WH - CRITICAL FIX *****
-    // Always update Wh on every packet to ensure it shows
+    // WH - Always update on every packet
     gfx->fillRect(100, y + LINE_HEIGHT*5, 150, LINE_HEIGHT, BG);
     gfx->setTextColor(CYAN);
     gfx->setCursor(100, y + LINE_HEIGHT*5);
@@ -544,7 +602,7 @@ void drawTelemetryScreen() {
     gfx->setCursor(250, y + LINE_HEIGHT*5); gfx->print("POWER:");
 
     // Draw all initial values
-    updateTelemetryScreen(true); // Force full update
+    updateTelemetryScreen(true);
 }
 
 /* ===================== SCREEN 3: GRAPHS ===================== */
@@ -833,6 +891,10 @@ void setup() {
 
     pinMode(JOY1_BTN, INPUT_PULLUP);
     pinMode(JOY2_BTN, INPUT_PULLUP);
+    
+    // Configure S1 switch pins for sleep detection
+    pinMode(SLEEP_PIN, INPUT_PULLUP);
+    pinMode(WAKE_PIN, INPUT_PULLUP);
 
     for (int i = 0; i < 4; i++) {
         pinMode(sw3pos[i][0], INPUT_PULLUP);
@@ -860,6 +922,14 @@ void setup() {
 
     Serial.begin(115200);
     delay(1000);
+
+    // Check wake reason
+    esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
+    if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT0) {
+        Serial.println("Woke up from deep sleep via switch");
+    } else {
+        Serial.println("Normal boot");
+    }
 
     // Print CSV header (16 columns)
     Serial.println("timestamp,btn1,btn2,brake,temp1,temp2,bat1,bat2,batTotal,current,throttle,rpm,speedKmh,vsens,power,wh");
@@ -894,6 +964,7 @@ void setup() {
 
 /* ===================== LOOP ===================== */
 void loop() {
+    checkSleepTrigger();  // Check if S1 switch is in sleep position
     checkScreenSwitch();
     drawHeader();
 
